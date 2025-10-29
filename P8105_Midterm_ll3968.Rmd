@@ -1,0 +1,332 @@
+---
+title: "P8105_Midterm_ll3968"
+output:
+  html_document: default
+  pdf_document: default
+date: "2025-10-18"
+---
+
+# Introduction
+
+This report reassesses the relationship between forward head posture (FHP) and enlarged external occipital protuberance (EEOP). The original study suggested mechanical load from poor posture drives EEOP formation. We reproduce and evaluate these findings.
+
+# Data Description and Cleaning
+The dataset contains 1,200 participants with balanced demographics. Missing EOP measurements were imputed from categorical classifications. Data cleaning addressed inconsistent coding and outliers. Key variables include FHP measurements, EOP size, EEOP classification (>10mm), and age groups.
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(readxl)
+library(knitr)
+knitr::opts_chunk$set(
+  error = FALSE,      # Don't show errors
+  warning = FALSE,    # Don't show warnings
+  message = FALSE,    # Don't show messages
+  echo = FALSE        # Don't show code (optional)
+)
+```
+
+```{r read data, echo=FALSE}
+
+eop <- read_xlsx("./p8105_mtp_data.xlsx",
+                 sheet = "this one",
+                 skip = 8,
+                 col_names = TRUE) %>%
+  janitor::clean_names()
+
+eop$eop_size_mm[(eop$eop_visibility_classification == 0) & (eop$eop_size == 0)] = 0
+eop$eop_size_mm[(eop$eop_visibility_classification == 1) & (eop$eop_size == 0)] = 2.5
+eop$eop_size_mm[(eop$eop_visibility_classification == 2) & (eop$eop_size == 0)] = 5
+eop$eop_shape[is.na(eop$eop_shape)] = 0
+eop$fhp_category[which(eop$fhp_category == 30.8)] = 3
+eop$eop_size[which(eop$eop_size == 14.6)] = 2
+eop$eop_size_mm[586] = 7.5
+
+eop$fhp_size_mm[which(is.na(eop$fhp_size_mm))] = 5
+
+cleaned_data <- eop %>%
+  mutate(sex_category = sex, 
+         sex = as.character(sex),
+         sex = case_when(
+           sex == "1" ~ "male",
+           sex == "0" ~ "female"
+         ),
+         eop_visibility_classification = as.character(eop_visibility_classification ),
+         eop_shape = as.character(eop_shape),
+         age_group_chr = case_when(
+           age_group == "1" ~ "18-",
+           age_group == "2" ~ "18-30",
+           age_group == "3" ~ "31-40",
+           age_group == "4" ~ "41-50",
+           age_group == "5" ~ "51-60",
+           age_group %in% c("6", "7", "8") ~ "60+"
+         ) %>% factor(levels = c("18-", "18-30", "31-40", "41-50", "51-60", "60+"), ordered = TRUE),
+          eop_size = factor(eop_size, levels = c("0", "1", "2", "3", "4", "5"), ordered = TRUE),
+         fhp_category = factor(fhp_category, levels = c("0", "1", "2", "3", "4", "5", "6", "7"), ordered = TRUE),
+         # Create EEOP variable based on paper definition (>10mm)
+    eeop = eop_size_mm > 10
+        ) %>%
+  select(sex, sex_category, everything())
+
+
+str(cleaned_data)
+# Basic dataset description
+cat("=== DATA CLEANING SUMMARY ===\n")
+cat("Final dataset dimensions:", dim(cleaned_data), "\n")
+cat("Number of participants:", nrow(cleaned_data), "\n")
+cat("Age range:", min(cleaned_data$age, na.rm = TRUE), "-", 
+    max(cleaned_data$age, na.rm = TRUE), "\n")
+```
+
+
+## age_gender table
+```{r age_gender, echo=FALSE}
+# Age and gender distribution
+age_gender_table <- cleaned_data %>%
+  count(age_group_chr, sex) %>%
+  rename(age_group = age_group_chr) %>%
+  pivot_wider(names_from = sex, values_from = n, values_fill = 0) %>%
+  mutate(Total = male + female, Percent = round(Total/1200*100, 1))
+
+kable(age_gender_table, caption = "Age and Gender Distribution of Participants")
+```
+
+## category consistency
+```{r category_consistency, echo=FALSE}
+# Issue 1: Categorical vs continuous variable consistency
+category_consistency <- cleaned_data %>%
+  group_by(eop_size) %>%
+  summarise(
+    n = n(),
+    min_size = min(eop_size_mm),
+    max_size = max(eop_size_mm),
+    mean_size = round(mean(eop_size_mm), 1),
+    sd_size = round(sd(eop_size_mm), 1),
+    .groups = 'drop'
+  )
+
+kable(category_consistency, caption = "EOP Size Ranges by Category")
+
+# Visualize the categorical-continuous relationship
+ggplot(cleaned_data, aes(x = eop_size, y = eop_size_mm)) +
+  geom_boxplot(fill = "lightblue", alpha = 0.7) +
+  geom_jitter(alpha = 0.3, width = 0.2) +
+  labs(
+    title = "EOP Size Distribution by Category",
+    subtitle = "Illustrating potential misalignment between categorical and continuous variables",
+    x = "EOP Category",
+    y = "EOP Size (mm)"
+  ) +
+  theme_minimal()
+```
+
+# Visualization Improvements
+
+## Improved Two-Panel Figure
+```{r figure, echo=FALSE, fig.width=12}
+
+library(tidyverse)
+library(patchwork)
+library(ggthemes)
+# Panel 1: Improved Figure 3 - FHP Distribution
+improved_fig3 <- ggplot(cleaned_data, aes(x = age_group_chr, y = fhp_size_mm)) +
+  geom_violin(aes(fill = age_group_chr), alpha = 0.7, trim = FALSE) +
+  geom_boxplot(width = 0.2, alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(alpha = 0.3, size = 0.8, width = 0.2) +
+  stat_summary(fun = mean, geom = "point", shape = 18, size = 3, color = "red") +
+  labs(
+    title = "Detailed FHP Distribution by Age Group",
+    subtitle = "Violin plots, boxplots, and individual points",
+    x = "Age Group",
+    y = "Forward Head Protraction (mm)",
+    fill = "Age Group"
+  ) +
+  theme_clean() +
+  theme(legend.position = "none")
+
+# Panel 2: Improved Figure 4 - EEOP Rates
+eeop_rates <- cleaned_data %>%
+  group_by(age_group_chr, sex) %>%
+  summarise(
+    total = n(),
+    eeop_count = sum(eeop, na.rm = TRUE),
+    eeop_rate = eeop_count / total,
+    .groups = 'drop'
+  ) %>%
+  filter(eeop_rate != 0)
+
+improved_fig4 <- ggplot(eeop_rates, aes(x = age_group_chr, y = eeop_rate, fill = sex)) +
+  geom_col(position = "dodge", alpha = 0.8) +
+  geom_text(aes(label = paste0(round(eeop_rate * 100, 1), "%")),
+            position = position_dodge(0.9), vjust = -0.5, size = 3) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 0.75)) +
+  labs(
+    title = "EEOP Prevalence Rates by Age and Sex",
+    subtitle = "Showing rates to account for controlled group sizes",
+    x = "Age Group",
+    y = "EEOP Prevalence Rate",
+    fill = "Sex"
+  ) +
+  theme_clean()
+
+# Combine into two-panel figure
+two_panel_figure <- improved_fig3 + improved_fig4 +
+  plot_annotation(tag_levels = 'A') &
+  theme(plot.tag = element_text(face = "bold"))
+
+print(two_panel_figure)
+  
+  
+```
+
+Original Figure 3 showed only FHP means and standard deviations. Our improved version reveals right-skewed distributions across age groups, with the 60+ cohort showing highest median FHP and greatest variability. Individual data points demonstrate substantial within-group variation.
+
+Original Figure 4 displayed EEOP counts, but rates are more informative given controlled group sizes. Our analysis shows dramatic disparities: 18-30 year old males exhibit 73% EEOP prevalence, far exceeding other groups. Females show consistently lower rates.
+
+## 2×5 Panel Figure: FHP vs EOP Size by Age and Sex
+
+```{r figure2, echo=FALSE, fig.width=10}
+# Create the 2x5 panel figure
+fhp_eop_panels <- ggplot(cleaned_data, aes(x = fhp_size_mm, y = eop_size_mm)) +
+  geom_point(aes(color = eeop), alpha = 0.6, size = 1.5) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred", linewidth = 0.8) +
+  facet_grid(sex ~ age_group_chr, scales = "free_x") +
+  scale_color_manual(values = c("FALSE" = "gray60", "TRUE" = "blue")) +
+  labs(
+    title = "Association between FHP and EOP Size by Age Group and Sex",
+    subtitle = "2×5 panel layout showing relationships across all demographic subgroups",
+    x = "Forward Head Protraction (mm)",
+    y = "EOP Size (mm)",
+    color = "EEOP (>10mm)"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+print(fhp_eop_panels)
+
+# Add correlation coefficients for each panel
+correlation_by_group <- cleaned_data %>%
+  group_by(age_group_chr, sex) %>%
+  summarise(
+    correlation = round(cor(fhp_size_mm, eop_size_mm, use = "complete.obs"), 3),
+    n = n(),
+    .groups = 'drop'
+  )
+
+print(correlation_by_group)
+```
+
+The 2×5 panel analysis reveals weak FHP-EOP correlations across subgroups. Strongest associations appear in younger males, while elderly females show minimal relationship. EEOP cases cluster in higher FHP ranges, supporting mechanical load hypotheses.
+
+# Reproducibility Assessment
+
+Sample sizes match reported values. FHP statistics show minor discrepancies: male means differ by 0.6mm, female means by 1.1mm. Standard deviations show small variations.
+
+The 33% EEOP prevalence is closely reproduced (32.5%). The finding that 34.5% of elderly exceed 40mm FHP is verified (34.8%). Age trends confirm increased FHP in older populations.
+
+
+## Sample Size
+```{r sample size}
+# Check sample size consistency
+reported_samples <- tibble(
+  age_group_chr = c("18-30", "31-40", "41-50", "51-60", "60+"),
+  reported = c(300, 200, 200, 200, 300)
+)
+
+actual_samples <- cleaned_data %>%
+  count(age_group_chr, name = "actual")
+
+sample_size_check <- reported_samples %>%
+  left_join(actual_samples, by = "age_group_chr") %>%
+  mutate(
+    consistent = between(reported - actual, -5, 5),
+    difference = actual - reported
+  )
+
+cat("=== SAMPLE SIZE VERIFICATION ===\n")
+kable(sample_size_check, caption = "Sample Size Consistency Check")
+```
+## FHP
+```{r fhp}
+# Verify FHP statistics by sex
+fhp_verification <- cleaned_data %>%
+  group_by(sex_category) %>%
+  summarise(
+    reported_mean = if_else(first(sex_category) == "male", 28, 24),
+    actual_mean = round(mean(fhp_size_mm, na.rm = TRUE), 1),
+    reported_sd = if_else(first(sex_category) == "male", 15, 11),
+    actual_sd = round(sd(fhp_size_mm, na.rm = TRUE), 1),
+    mean_consistent = abs(actual_mean - reported_mean) <= 1,
+    sd_consistent = abs(actual_sd - reported_sd) <= 2,
+    .groups = 'drop'
+  )
+
+cat("=== FHP STATISTICS VERIFICATION ===\n")
+kable(fhp_verification, caption = "FHP Mean and Standard Deviation Check")
+```
+## EEOP
+```{r eeop}
+
+# EEOP definition and prevalence check
+eeop_analysis <- cleaned_data %>%
+  summarise(
+    eeop_definition = "EOP size > 10mm",
+    variables_used = "eop_size_mm (continuous) → eeop (logical, >10mm)",
+    total_participants = n(),
+    eeop_cases = sum(eeop, na.rm = TRUE),
+    reported_prevalence = 0.33,
+    actual_prevalence = round(eeop_cases / total_participants, 3),
+    prevalence_difference = round(actual_prevalence - reported_prevalence, 3),
+    finding_consistent = abs(actual_prevalence - reported_prevalence) <= 0.02
+  )
+
+cat("=== EEOP PREVALENCE VERIFICATION ===\n")
+kable(t(eeop_analysis), caption = "EEOP Prevalence Analysis")
+
+# FHP >40mm in over-60s verification
+fhp_elderly_analysis <- cleaned_data %>%
+  filter(age_group_chr == "60+") %>%
+  summarise(
+    total_elderly = n(),
+    fhp_gt_40_count = sum(fhp_size_mm > 40, na.rm = TRUE),
+    reported_rate = 0.345,
+    actual_rate = round(fhp_gt_40_count / total_elderly, 3),
+    rate_difference = round(actual_rate - reported_rate, 3),
+    broad_trend_consistent = actual_rate > 0.3,  # Check if generally high
+    specific_value_consistent = abs(actual_rate - reported_rate) <= 0.05
+  )
+
+cat("=== FHP >40mm IN ELDERLY VERIFICATION ===\n")
+kable(t(fhp_elderly_analysis), caption = "FHP >40mm in Over-60s Population")
+```
+
+## Age Trend
+
+```{r age trend}
+fhp_age_trend <- cleaned_data %>%
+  group_by(age_group_chr) %>%
+  summarise(
+    n = n(),
+    mean_fhp = round(mean(fhp_size_mm, na.rm = TRUE), 1),
+    sd_fhp = round(sd(fhp_size_mm, na.rm = TRUE), 1),
+    prop_gt_40mm = round(mean(fhp_size_mm > 40, na.rm = TRUE), 3),
+    .groups = 'drop'
+  )
+
+cat("=== FHP AGE TREND ANALYSIS ===\n")
+kable(fhp_age_trend, caption = "FHP Measurements Across Age Groups")
+```
+
+# Critical Discussion
+
+Statistical findings are reproducible, but causal claims require scrutiny. Data demonstrate posture-EOP association, particularly in young males, but cannot establish causation. Confounding factors—genetic predisposition, occupational exposures—remain unaddressed.
+
+High EEOP prevalence in young adults demands explanation, though technology use represents only one mechanism. Historical comparisons and longitudinal data are needed.
+
+# Conclusion
+
+This analysis confirms statistical relationships while highlighting causal interpretation limits. The mechanical load-EOP association appears robust, but evidence specifically implicating cell phones remains circumstantial. Future research needs direct technology measurements and historical controls.
+
